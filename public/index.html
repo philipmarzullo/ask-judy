@@ -220,48 +220,102 @@
 
     // ─── OnboardingScreen ────────────────────────────────────────────
 
+    const ONBOARDING_STEPS = [
+      { key: "name", label: "What should Judy call you?", placeholder: "Your first name", icon: "👋", hint: "Just your first name is great!" },
+      { key: "familySize", label: "Who are you feeding?", placeholder: "e.g. Me, husband, and 2 kids (4 total)", icon: "👨‍👩‍👧‍👦", hint: "Judy tailors portions and recipes to your crew size" },
+      { key: "kidsAges", label: "Any kids? How old?", placeholder: "e.g. 5 and 8, or just me and my partner", icon: "👶", hint: "Helps Judy suggest age-appropriate meals and lunches" },
+      { key: "dietaryNeeds", label: "Allergies or dietary needs?", placeholder: "e.g. Nut allergy, vegetarian, none", icon: "⚠️", hint: "Safety first! Judy will always respect these" },
+      { key: "cookingLevel", label: "How comfortable are you in the kitchen?", placeholder: "e.g. Total beginner, can follow a recipe, pretty confident", icon: "👩‍🍳", hint: "No judgment! Judy meets you where you are" },
+      { key: "busyNights", label: "Which nights are craziest?", placeholder: "e.g. Tuesdays and Thursdays — soccer practice", icon: "📅", hint: "Judy will plan quick meals on your busy nights" },
+    ];
+
     function OnboardingScreen({ onComplete }) {
-      const [name, setName] = useState("");
+      const [step, setStep] = useState(0);
+      const [answers, setAnswers] = useState({ name: "", familySize: "", kidsAges: "", dietaryNeeds: "", cookingLevel: "", busyNights: "" });
       const [saving, setSaving] = useState(false);
 
-      const handleSave = async () => {
-        if (!name.trim()) return;
-        setSaving(true);
-        try {
-          await authFetch("/api/profile", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: name.trim() }),
-          });
-          onComplete(name.trim());
-        } catch (e) {
-          console.error("Onboarding save error:", e);
-          setSaving(false);
+      const current = ONBOARDING_STEPS[step];
+      const isLast = step === ONBOARDING_STEPS.length - 1;
+      const isFirst = step === 0;
+      const val = answers[current.key].trim();
+
+      const handleNext = async () => {
+        if (isFirst && !val) return;
+        if (isLast) {
+          setSaving(true);
+          try {
+            await authFetch("/api/profile", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: answers.name.trim(),
+                familySize: answers.familySize.trim(),
+                kidsAges: answers.kidsAges.trim(),
+                dietaryNeeds: answers.dietaryNeeds.trim(),
+                cookingLevel: answers.cookingLevel.trim(),
+                busyNights: answers.busyNights.trim(),
+              }),
+            });
+            onComplete(answers.name.trim());
+          } catch (e) {
+            console.error("Onboarding save error:", e);
+            setSaving(false);
+          }
+        } else {
+          setStep(step + 1);
+        }
+      };
+
+      const handleSkip = () => {
+        if (isLast) {
+          handleNext();
+        } else {
+          setStep(step + 1);
         }
       };
 
       return (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100dvh", background: "linear-gradient(180deg,#FFF8F0 0%,#FFF 40%)", padding: "0 24px" }}>
-          <div style={{ fontSize: 64, marginBottom: 12 }}>👩‍🍳</div>
-          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Welcome to Ask Judy!</h1>
-          <p style={{ color: "#8B7B6B", fontSize: 14, marginBottom: 32, textAlign: "center" }}>What should Judy call you?</p>
+          <div style={{ fontSize: 56, marginBottom: 8 }}>{current.icon}</div>
+          <h1 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 4, textAlign: "center" }}>{current.label}</h1>
+          <p style={{ color: "#B8A894", fontSize: 13, marginBottom: 24, textAlign: "center" }}>{current.hint}</p>
 
-          <div style={{ width: "100%", maxWidth: 340 }}>
+          {/* Progress dots */}
+          <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+            {ONBOARDING_STEPS.map((_, i) => (
+              <div key={i} style={{ width: 8, height: 8, borderRadius: "50%", background: i === step ? "#FF8C42" : i < step ? "#FFD4B8" : "#E8DDD0" }} />
+            ))}
+          </div>
+
+          <div style={{ width: "100%", maxWidth: 360 }}>
             <input
+              key={current.key}
               type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
-              placeholder="Your first name"
+              value={answers[current.key]}
+              onChange={(e) => setAnswers((a) => ({ ...a, [current.key]: e.target.value }))}
+              onKeyDown={(e) => { if (e.key === "Enter") handleNext(); }}
+              placeholder={current.placeholder}
               autoFocus
               style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
             />
             <button
-              onClick={handleSave}
-              disabled={saving || !name.trim()}
-              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: name.trim() ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
-              {saving ? "Setting up..." : "Let's Go!"}
+              onClick={handleNext}
+              disabled={saving || (isFirst && !val)}
+              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (isFirst && !val) ? "#DDD" : "linear-gradient(135deg,#FF8C42,#FF6B35)", color: "white", fontSize: 16, fontWeight: 600, cursor: saving ? "wait" : "pointer", marginBottom: 8 }}>
+              {saving ? "Setting up..." : isLast ? "Done — Let's Cook!" : "Next"}
             </button>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              {step > 0 ? (
+                <button onClick={() => setStep(step - 1)} style={{ padding: "8px 16px", borderRadius: 12, border: "none", background: "transparent", color: "#B8A894", fontSize: 13, cursor: "pointer" }}>
+                  ← Back
+                </button>
+              ) : <div />}
+              {!isFirst && (
+                <button onClick={handleSkip} style={{ padding: "8px 16px", borderRadius: 12, border: "none", background: "transparent", color: "#B8A894", fontSize: 13, cursor: "pointer" }}>
+                  Skip →
+                </button>
+              )}
+            </div>
           </div>
         </div>
       );
