@@ -16,6 +16,7 @@
     button:active { opacity: 0.85; }
     .skill-btn:hover { background: #FFF3EB !important; border-color: #FFB88C !important; }
     .qp-btn:hover { background: #FFF3EB !important; border-color: #FF8C42 !important; }
+    .mem-del:hover { background: #FFE0E0 !important; color: #D44 !important; }
   </style>
 </head>
 <body>
@@ -26,7 +27,18 @@
   <script type="text/babel">
     const { useState, useRef, useEffect } = React;
 
-    const SYSTEM_PROMPT = (profile) => {
+    const CATEGORY_LABELS = {
+      preference: "🎯 Preference",
+      dislike: "🚫 Dislike",
+      favorite: "⭐ Favorite",
+      allergy: "⚠️ Allergy",
+      family_info: "👨‍👩‍👧‍👦 Family",
+      schedule: "📅 Schedule",
+      budget: "💰 Budget",
+      cooking_tip: "🍳 Cooking",
+    };
+
+    const SYSTEM_PROMPT = (profile, memories) => {
       let pInfo = "";
       if (profile && Object.values(profile).some((v) => v)) {
         pInfo = "\n\nHere is what you know about Leslie's family:";
@@ -42,6 +54,15 @@
         pInfo += "\nUse this info to personalize suggestions naturally.";
       } else {
         pInfo = "\n\nYou don't know much about Leslie's family yet. Gently ask questions to learn more.";
+      }
+
+      let mInfo = "";
+      if (memories && memories.length > 0) {
+        mInfo = "\n\nThings you've learned about Leslie's family from past conversations:";
+        memories.forEach((m) => {
+          mInfo += "\n- " + m.memory;
+        });
+        mInfo += "\nWeave this knowledge naturally into your responses — don't list it back to her.";
       }
 
       return (
@@ -61,6 +82,7 @@
         "Kendall cares what her lunch looks like. Jake wants it to taste good. " +
         "Suggest batch-prep Sunday systems and mix-and-match lunchbox strategies.\n" +
         pInfo +
+        mInfo +
         "\n\nRemember: Help Leslie feel like she has got this. Every interaction should leave her more confident."
       );
     };
@@ -108,18 +130,51 @@
         familySize: "", kidsAges: "", dietaryNeeds: "", dislikes: "",
         budget: "", cookingLevel: "", busyNights: "", favorites: "", equipment: "",
       });
+      const [memories, setMemories] = useState([]);
       const [panel, setPanel] = useState(null);
       const [saved, setSaved] = useState(false);
       const endRef = useRef(null);
       const fileRef = useRef(null);
       const taRef = useRef(null);
 
-      // Load saved profile from localStorage
+      // Load profile and memories on mount
       useEffect(() => {
-        try {
-          const s = localStorage.getItem("judy-family");
-          if (s) { setProfile(JSON.parse(s)); setSaved(true); }
-        } catch (e) {}
+        // Try Supabase first, fall back to localStorage
+        fetch("/api/profile")
+          .then((r) => r.json())
+          .then((data) => {
+            if (data.profile) {
+              setProfile({
+                familySize: data.profile.family_size || "",
+                kidsAges: data.profile.kids_ages || "",
+                dietaryNeeds: data.profile.dietary_needs || "",
+                dislikes: data.profile.dislikes || "",
+                budget: data.profile.budget || "",
+                cookingLevel: data.profile.cooking_level || "",
+                busyNights: data.profile.busy_nights || "",
+                favorites: data.profile.favorites || "",
+                equipment: data.profile.equipment || "",
+              });
+              setSaved(true);
+            } else {
+              // Fallback to localStorage
+              try {
+                const s = localStorage.getItem("judy-family");
+                if (s) { setProfile(JSON.parse(s)); setSaved(true); }
+              } catch (e) {}
+            }
+          })
+          .catch(() => {
+            try {
+              const s = localStorage.getItem("judy-family");
+              if (s) { setProfile(JSON.parse(s)); setSaved(true); }
+            } catch (e) {}
+          });
+
+        fetch("/api/memories")
+          .then((r) => r.json())
+          .then((data) => { if (data.memories) setMemories(data.memories); })
+          .catch(() => {});
       }, []);
 
       useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
@@ -131,12 +186,33 @@
         }
       }, [input]);
 
-      const saveProfile = () => {
+      const saveProfile = async () => {
+        // Always save to localStorage as offline fallback
+        try { localStorage.setItem("judy-family", JSON.stringify(profile)); } catch (e) {}
+        // Save to Supabase
         try {
-          localStorage.setItem("judy-family", JSON.stringify(profile));
-          setSaved(true);
-          setPanel(null);
+          await fetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(profile),
+          });
         } catch (e) {}
+        setSaved(true);
+        setPanel(null);
+      };
+
+      const deleteMemory = async (id) => {
+        try {
+          await fetch(`/api/memories/${id}`, { method: "DELETE" });
+          setMemories((prev) => prev.filter((m) => m.id !== id));
+        } catch (e) {}
+      };
+
+      const refreshMemories = () => {
+        fetch("/api/memories")
+          .then((r) => r.json())
+          .then((data) => { if (data.memories) setMemories(data.memories); })
+          .catch(() => {});
       };
 
       const onFiles = (e) => {
@@ -181,7 +257,7 @@
             body: JSON.stringify({
               model: "claude-sonnet-4-20250514",
               max_tokens: 1500,
-              system: SYSTEM_PROMPT(profile),
+              system: SYSTEM_PROMPT(profile, memories),
               messages: apiMsgs,
             }),
           });
@@ -189,6 +265,8 @@
           if (data.error) throw new Error(data.error.message || "API error");
           const txt = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
           setMsgs((p) => [...p, { role: "assistant", content: txt || "Hmm, hit a snag. Try again!", _text: txt }]);
+          // Refresh memories after a short delay (gives extraction time to complete)
+          setTimeout(refreshMemories, 3000);
         } catch (e) {
           setMsgs((p) => [...p, { role: "assistant", content: "Oops! Something went wrong. Try again? 💛", _text: "Oops! Something went wrong. Try again? 💛" }]);
         } finally {
@@ -223,6 +301,10 @@
               style={{ padding: "7px 12px", borderRadius: 18, background: panel === "family" ? "white" : "rgba(255,255,255,.2)", color: panel === "family" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
               🏠 My Family
             </button>
+            <button onClick={() => { setPanel(panel === "memory" ? null : "memory"); if (panel !== "memory") refreshMemories(); }}
+              style={{ padding: "7px 12px", borderRadius: 18, background: panel === "memory" ? "white" : "rgba(255,255,255,.2)", color: panel === "memory" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", position: "relative" }}>
+              🧠 Memory{memories.length > 0 && <span style={{ marginLeft: 4, background: "rgba(255,255,255,.3)", borderRadius: 8, padding: "1px 6px", fontSize: 10 }}>{memories.length}</span>}
+            </button>
             <button onClick={() => setPanel(panel === "skills" ? null : "skills")}
               style={{ padding: "7px 12px", borderRadius: 18, background: panel === "skills" ? "white" : "rgba(255,255,255,.2)", color: panel === "skills" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
               📚 Teach Me
@@ -256,6 +338,47 @@
                     {saved ? "✅ Update & Save" : "💾 Save My Info"}
                   </button>
                   <button onClick={() => setPanel(null)} style={{ padding: "14px 20px", borderRadius: 14, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 15, cursor: "pointer" }}>Back</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Memory Panel */}
+          {panel === "memory" && (
+            <div style={{ position: "absolute", top: 66, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
+              <div style={{ maxWidth: 500, margin: "0 auto" }}>
+                <div style={{ textAlign: "center", marginBottom: 20 }}>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>🧠</div>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Judy's Memory</h2>
+                  <p style={{ color: "#8B7B6B", fontSize: 13, lineHeight: 1.5 }}>Things Judy has learned about your family from your conversations. Remove anything that's wrong!</p>
+                </div>
+                {memories.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: "40px 20px" }}>
+                    <div style={{ fontSize: 40, marginBottom: 12 }}>💭</div>
+                    <p style={{ color: "#8B7B6B", fontSize: 14, lineHeight: 1.5 }}>
+                      No memories yet! As you chat with Judy, she'll automatically pick up on your family's preferences, favorites, and needs.
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 40 }}>
+                    {memories.map((m) => (
+                      <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "12px 14px", borderRadius: 12, border: "1.5px solid #F0E6D9", background: "#FFFCF8" }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: "#B8936A", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>
+                            {CATEGORY_LABELS[m.category] || m.category}
+                          </div>
+                          <div style={{ fontSize: 14, color: "#3D3D3D", lineHeight: 1.4 }}>{m.memory}</div>
+                        </div>
+                        <button onClick={() => deleteMemory(m.id)} className="mem-del"
+                          style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #E8DDD0", background: "#FFF", color: "#B8936A", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ marginBottom: 40 }}>
+                  <button onClick={() => setPanel(null)} style={{ width: "100%", padding: 14, borderRadius: 14, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 15, cursor: "pointer" }}>Back</button>
                 </div>
               </div>
             </div>
