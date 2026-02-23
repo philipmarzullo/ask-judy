@@ -7,28 +7,51 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Supabase client (optional — app still works without it)
-const supabase =
-  process.env.SUPABASE_URL && process.env.SUPABASE_KEY
-    ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
-    : null;
-
-if (!supabase) {
-  console.warn("SUPABASE_URL or SUPABASE_KEY not set — running without persistence");
-}
+// Initialize Supabase client with service role key (bypasses RLS)
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_KEY
+);
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.static(join(__dirname, "public")));
 
+// ─── Public: auth config for frontend ───────────────────────────────
+
+app.get("/api/auth/config", (req, res) => {
+  res.json({
+    supabaseUrl: process.env.SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
+  });
+});
+
+// ─── Auth middleware ─────────────────────────────────────────────────
+
+async function requireAuth(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid authorization header" });
+  }
+
+  const token = authHeader.slice(7);
+  const { data, error } = await supabase.auth.getUser(token);
+
+  if (error || !data.user) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+
+  req.userId = data.user.id;
+  next();
+}
+
 // ─── Profile endpoints ──────────────────────────────────────────────
 
-app.get("/api/profile", async (req, res) => {
-  if (!supabase) return res.json({ profile: null });
+app.get("/api/profile", requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("profiles")
       .select("*")
-      .eq("user_id", "leslie")
+      .eq("user_id", req.userId)
       .single();
     if (error && error.code !== "PGRST116") throw error; // PGRST116 = no rows
     res.json({ profile: data || null });
@@ -38,37 +61,39 @@ app.get("/api/profile", async (req, res) => {
   }
 });
 
-app.put("/api/profile", async (req, res) => {
-  if (!supabase) return res.json({ ok: true, persisted: false });
+app.put("/api/profile", requireAuth, async (req, res) => {
   try {
     const {
-      familySize, kidsAges, dietaryNeeds, dislikes,
+      name, familySize, kidsAges, dietaryNeeds, dislikes,
       budget, cookingLevel, busyNights, favorites, equipment,
     } = req.body;
 
+    const upsertData = {
+      user_id: req.userId,
+      family_size: familySize || "",
+      kids_ages: kidsAges || "",
+      dietary_needs: dietaryNeeds || "",
+      dislikes: dislikes || "",
+      budget: budget || "",
+      cooking_level: cookingLevel || "",
+      busy_nights: busyNights || "",
+      favorites: favorites || "",
+      equipment: equipment || "",
+      updated_at: new Date().toISOString(),
+    };
+
+    if (name !== undefined) {
+      upsertData.name = name;
+    }
+
     const { data, error } = await supabase
       .from("profiles")
-      .upsert(
-        {
-          user_id: "leslie",
-          family_size: familySize || "",
-          kids_ages: kidsAges || "",
-          dietary_needs: dietaryNeeds || "",
-          dislikes: dislikes || "",
-          budget: budget || "",
-          cooking_level: cookingLevel || "",
-          busy_nights: busyNights || "",
-          favorites: favorites || "",
-          equipment: equipment || "",
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" }
-      )
+      .upsert(upsertData, { onConflict: "user_id" })
       .select()
       .single();
 
     if (error) throw error;
-    res.json({ ok: true, persisted: true, profile: data });
+    res.json({ ok: true, profile: data });
   } catch (err) {
     console.error("PUT /api/profile error:", err);
     res.status(500).json({ error: "Failed to save profile" });
@@ -77,13 +102,12 @@ app.put("/api/profile", async (req, res) => {
 
 // ─── Memories endpoints ─────────────────────────────────────────────
 
-app.get("/api/memories", async (req, res) => {
-  if (!supabase) return res.json({ memories: [] });
+app.get("/api/memories", requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("memories")
       .select("*")
-      .eq("user_id", "leslie")
+      .eq("user_id", req.userId)
       .order("created_at", { ascending: false });
     if (error) throw error;
     res.json({ memories: data || [] });
@@ -93,14 +117,13 @@ app.get("/api/memories", async (req, res) => {
   }
 });
 
-app.delete("/api/memories/:id", async (req, res) => {
-  if (!supabase) return res.json({ ok: true });
+app.delete("/api/memories/:id", requireAuth, async (req, res) => {
   try {
     const { error } = await supabase
       .from("memories")
       .delete()
       .eq("id", req.params.id)
-      .eq("user_id", "leslie");
+      .eq("user_id", req.userId);
     if (error) throw error;
     res.json({ ok: true });
   } catch (err) {
@@ -111,7 +134,7 @@ app.delete("/api/memories/:id", async (req, res) => {
 
 // ─── Chat endpoint ──────────────────────────────────────────────────
 
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", requireAuth, async (req, res) => {
   const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 
   if (!ANTHROPIC_API_KEY) {
@@ -144,19 +167,17 @@ app.post("/api/chat", async (req, res) => {
     res.json(data);
 
     // Fire-and-forget: extract memories from this exchange
-    if (supabase) {
-      const msgs = req.body.messages || [];
-      const lastUser = msgs.filter((m) => m.role === "user").pop();
-      const assistantText = (data.content || [])
-        .filter((b) => b.type === "text")
-        .map((b) => b.text)
-        .join("\n");
+    const msgs = req.body.messages || [];
+    const lastUser = msgs.filter((m) => m.role === "user").pop();
+    const assistantText = (data.content || [])
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
 
-      if (lastUser && assistantText) {
-        extractMemories(ANTHROPIC_API_KEY, lastUser, assistantText).catch(
-          (err) => console.error("Memory extraction error:", err)
-        );
-      }
+    if (lastUser && assistantText) {
+      extractMemories(ANTHROPIC_API_KEY, lastUser, assistantText, req.userId).catch(
+        (err) => console.error("Memory extraction error:", err)
+      );
     }
   } catch (err) {
     console.error("Anthropic API error:", err);
@@ -166,7 +187,7 @@ app.post("/api/chat", async (req, res) => {
 
 // ─── Memory extraction (background) ────────────────────────────────
 
-async function extractMemories(apiKey, userMsg, assistantText) {
+async function extractMemories(apiKey, userMsg, assistantText, userId) {
   // Get the text content from the user message
   let userText = "";
   if (typeof userMsg.content === "string") {
@@ -180,7 +201,7 @@ async function extractMemories(apiKey, userMsg, assistantText) {
 
   if (!userText) return;
 
-  const extractionPrompt = `You are a memory extraction assistant. Given this conversation exchange between a user (Leslie) and a meal planning assistant (Judy), extract any NEW facts about Leslie's family worth remembering for future conversations.
+  const extractionPrompt = `You are a memory extraction assistant. Given this conversation exchange between a user and a meal planning assistant (Judy), extract any NEW facts about the user's family worth remembering for future conversations.
 
 Categories you can use: preference, dislike, favorite, allergy, family_info, schedule, budget, cooking_tip
 
@@ -189,12 +210,12 @@ Return [] if there is nothing new worth remembering.
 
 ONLY extract concrete, specific facts. Do NOT extract:
 - Generic cooking advice Judy gave
-- Questions Leslie asked (unless they reveal a preference)
+- Questions the user asked (unless they reveal a preference)
 - Vague statements
 
 Examples of good extractions:
-- {"memory": "Jake loves pepperoni pizza", "category": "favorite"}
-- {"memory": "Kendall is allergic to tree nuts", "category": "allergy"}
+- {"memory": "Oldest kid loves pepperoni pizza", "category": "favorite"}
+- {"memory": "Daughter is allergic to tree nuts", "category": "allergy"}
 - {"memory": "Tuesday nights are busy because of soccer practice", "category": "schedule"}
 
 User said: ${userText}
@@ -252,7 +273,7 @@ Return ONLY the JSON array, no other text.`;
   const rows = memories
     .filter((m) => m.memory && m.category && validCategories.has(m.category))
     .map((m) => ({
-      user_id: "leslie",
+      user_id: userId,
       memory: m.memory,
       category: m.category,
     }));

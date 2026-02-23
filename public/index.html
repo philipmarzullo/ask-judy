@@ -10,6 +10,7 @@
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #FFF8F0; overflow: hidden; height: 100dvh; }
     #root { height: 100dvh; }
     @keyframes jbounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+    @keyframes spin { to { transform: rotate(360deg); } }
     textarea::placeholder { color: #B8A894; }
     input::placeholder { color: #C4B8A8; }
     textarea:focus, input:focus { outline: none; border-color: #FF8C42 !important; }
@@ -24,8 +25,11 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script type="text/babel">
-    const { useState, useRef, useEffect } = React;
+    const { useState, useRef, useEffect, useCallback } = React;
+
+    // ─── Shared constants ────────────────────────────────────────────
 
     const CATEGORY_LABELS = {
       preference: "🎯 Preference",
@@ -38,10 +42,10 @@
       cooking_tip: "🍳 Cooking",
     };
 
-    const SYSTEM_PROMPT = (profile, memories) => {
+    const SYSTEM_PROMPT = (profile, memories, userName) => {
       let pInfo = "";
       if (profile && Object.values(profile).some((v) => v)) {
-        pInfo = "\n\nHere is what you know about Leslie's family:";
+        pInfo = `\n\nHere is what you know about ${userName}'s family:`;
         if (profile.familySize) pInfo += "\n- Family size: " + profile.familySize;
         if (profile.kidsAges) pInfo += "\n- Kids/ages: " + profile.kidsAges;
         if (profile.dietaryNeeds) pInfo += "\n- Dietary needs: " + profile.dietaryNeeds;
@@ -53,21 +57,21 @@
         if (profile.equipment) pInfo += "\n- Equipment: " + profile.equipment;
         pInfo += "\nUse this info to personalize suggestions naturally.";
       } else {
-        pInfo = "\n\nYou don't know much about Leslie's family yet. Gently ask questions to learn more.";
+        pInfo = `\n\nYou don't know much about ${userName}'s family yet. Gently ask questions to learn more.`;
       }
 
       let mInfo = "";
       if (memories && memories.length > 0) {
-        mInfo = "\n\nThings you've learned about Leslie's family from past conversations:";
+        mInfo = `\n\nThings you've learned about ${userName}'s family from past conversations:`;
         memories.forEach((m) => {
           mInfo += "\n- " + m.memory;
         });
-        mInfo += "\nWeave this knowledge naturally into your responses — don't list it back to her.";
+        mInfo += "\nWeave this knowledge naturally into your responses — don't list it back.";
       }
 
       return (
-        "You are Judy, a warm, fun, and encouraging meal planning assistant. You are like a best friend in the kitchen.\n\n" +
-        "Personality: Warm, upbeat, supportive. You understand the struggles of a mom keeping everything together. " +
+        `You are Judy, a warm, fun, and encouraging meal planning assistant. You are like a best friend in the kitchen. The user's name is ${userName}.\n\n` +
+        "Personality: Warm, upbeat, supportive. You understand the struggles of keeping everything together. " +
         "Never judge. Casual friendly language. Celebrate small wins. Practical not aspirational. Light humor. Use emojis naturally but not excessively.\n\n" +
         "Skills:\n" +
         "- Meal Planning: Weekly plans tailored to family size, ages, picky eaters, schedule\n" +
@@ -77,13 +81,10 @@
         "- Leftovers strategy: Meals that build on each other\n" +
         "- Image support: Help with photos of fridge, pantry, recipes\n" +
         "- Teaching: Break things down simply, no chef jargon, encouraging baby steps\n" +
-        "- School Lunches: Leslie has Kendall (13, 7th grade) and Jake (10, 5th grade). " +
-        "School lunches are a big pain point. Packable, stays fresh, not boring. " +
-        "Kendall cares what her lunch looks like. Jake wants it to taste good. " +
-        "Suggest batch-prep Sunday systems and mix-and-match lunchbox strategies.\n" +
+        "- School Lunches: If the user has school-age kids, help with packable lunches that stay fresh and aren't boring.\n" +
         pInfo +
         mInfo +
-        "\n\nRemember: Help Leslie feel like she has got this. Every interaction should leave her more confident."
+        `\n\nRemember: Help ${userName} feel like they've got this. Every interaction should leave them more confident.`
       );
     };
 
@@ -91,12 +92,12 @@
       { label: "📅 Plan my week", text: "Help me plan meals for this week!" },
       { label: "🛒 Grocery list", text: "I need a grocery list for the week" },
       { label: "⏱️ Quick dinner", text: "I need a quick dinner idea for tonight, 30 minutes or less!" },
-      { label: "🍱 School lunches", text: "I need school lunch ideas for the week! Kendall is 13 in 7th grade and Jake is 10 in 5th grade. They need lunches that are easy to pack, stay fresh, and they will actually eat." },
+      { label: "🍱 School lunches", text: "I need school lunch ideas for the week! Something easy to pack, stays fresh, and the kids will actually eat." },
       { label: "📸 What's in my fridge", text: "Let me show you what I have in my fridge, tell me what I can make!" },
     ];
 
     const SKILL_TOPICS = [
-      { emoji: "🍱", label: "School lunch ideas that aren't boring", text: "Teach me how to pack school lunches that Kendall (13, 7th grade) and Jake (10, 5th grade) will actually eat. I am tired of the same sandwich every day" },
+      { emoji: "🍱", label: "School lunch ideas that aren't boring", text: "Teach me how to pack school lunches my kids will actually eat. I am tired of the same sandwich every day" },
       { emoji: "🧊", label: "Lunchbox prep and what stays fresh", text: "Teach me what foods pack well for school lunches and stay good until lunchtime. What needs ice packs? What gets soggy? How do I prep the night before?" },
       { emoji: "🔪", label: "Knife skills basics", text: "Teach me basic knife skills, how to chop, dice, and mince like I actually know what I am doing" },
       { emoji: "🧂", label: "How to season food", text: "Teach me how to season food properly. I never know how much salt or spice to use" },
@@ -120,7 +121,155 @@
       { key: "equipment", label: "Kitchen equipment?", icon: "🍳", hint: "e.g. Instant Pot, air fryer, basic stuff" },
     ];
 
-    function AskJudy() {
+    // ─── Auth helper ─────────────────────────────────────────────────
+
+    let _supabaseClient = null;
+
+    async function getAccessToken() {
+      if (!_supabaseClient) return null;
+      const { data } = await _supabaseClient.auth.getSession();
+      return data.session?.access_token || null;
+    }
+
+    async function authFetch(url, options = {}) {
+      const token = await getAccessToken();
+      if (!token) throw new Error("Not authenticated");
+      return fetch(url, {
+        ...options,
+        headers: {
+          ...options.headers,
+          "Authorization": `Bearer ${token}`,
+        },
+      });
+    }
+
+    // ─── LoadingScreen ───────────────────────────────────────────────
+
+    function LoadingScreen() {
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100dvh", background: "linear-gradient(180deg,#FFF8F0 0%,#FFF 40%)" }}>
+          <div style={{ fontSize: 64, marginBottom: 16 }}>👩‍🍳</div>
+          <div style={{ fontSize: 16, color: "#8B7B6B" }}>Loading...</div>
+        </div>
+      );
+    }
+
+    // ─── LoginScreen ─────────────────────────────────────────────────
+
+    function LoginScreen({ supabaseClient }) {
+      const [email, setEmail] = useState("");
+      const [sent, setSent] = useState(false);
+      const [error, setError] = useState("");
+      const [sending, setSending] = useState(false);
+
+      const handleSend = async () => {
+        if (!email.trim()) return;
+        setSending(true);
+        setError("");
+        const { error: err } = await supabaseClient.auth.signInWithOtp({
+          email: email.trim(),
+          options: { emailRedirectTo: window.location.origin },
+        });
+        setSending(false);
+        if (err) {
+          setError(err.message);
+        } else {
+          setSent(true);
+        }
+      };
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100dvh", background: "linear-gradient(180deg,#FFF8F0 0%,#FFF 40%)", padding: "0 24px" }}>
+          <div style={{ fontSize: 64, marginBottom: 12 }}>👩‍🍳</div>
+          <h1 style={{ fontSize: 26, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Ask Judy</h1>
+          <p style={{ color: "#8B7B6B", fontSize: 14, marginBottom: 32, textAlign: "center" }}>Your meal planning bestie</p>
+
+          {sent ? (
+            <div style={{ textAlign: "center", maxWidth: 340 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>📬</div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 8 }}>Check your email!</h2>
+              <p style={{ color: "#8B7B6B", fontSize: 14, lineHeight: 1.5 }}>
+                We sent a magic link to <strong>{email}</strong>. Click it to sign in.
+              </p>
+              <button onClick={() => setSent(false)} style={{ marginTop: 20, padding: "10px 20px", borderRadius: 12, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 14, cursor: "pointer" }}>
+                Use a different email
+              </button>
+            </div>
+          ) : (
+            <div style={{ width: "100%", maxWidth: 340 }}>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+                placeholder="Enter your email"
+                style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
+              />
+              {error && <p style={{ color: "#D44", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+              <button
+                onClick={handleSend}
+                disabled={sending || !email.trim()}
+                style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: email.trim() ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: sending ? "wait" : "pointer" }}>
+                {sending ? "Sending..." : "Send Magic Link"}
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // ─── OnboardingScreen ────────────────────────────────────────────
+
+    function OnboardingScreen({ onComplete }) {
+      const [name, setName] = useState("");
+      const [saving, setSaving] = useState(false);
+
+      const handleSave = async () => {
+        if (!name.trim()) return;
+        setSaving(true);
+        try {
+          await authFetch("/api/profile", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name.trim() }),
+          });
+          onComplete(name.trim());
+        } catch (e) {
+          console.error("Onboarding save error:", e);
+          setSaving(false);
+        }
+      };
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100dvh", background: "linear-gradient(180deg,#FFF8F0 0%,#FFF 40%)", padding: "0 24px" }}>
+          <div style={{ fontSize: 64, marginBottom: 12 }}>👩‍🍳</div>
+          <h1 style={{ fontSize: 22, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Welcome to Ask Judy!</h1>
+          <p style={{ color: "#8B7B6B", fontSize: 14, marginBottom: 32, textAlign: "center" }}>What should Judy call you?</p>
+
+          <div style={{ width: "100%", maxWidth: 340 }}>
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSave(); }}
+              placeholder="Your first name"
+              autoFocus
+              style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
+            />
+            <button
+              onClick={handleSave}
+              disabled={saving || !name.trim()}
+              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: name.trim() ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: saving ? "wait" : "pointer" }}>
+              {saving ? "Setting up..." : "Let's Go!"}
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // ─── AskJudy (main app) ─────────────────────────────────────────
+
+    function AskJudy({ session, userName, supabaseClient }) {
       const [msgs, setMsgs] = useState([]);
       const [input, setInput] = useState("");
       const [loading, setLoading] = useState(false);
@@ -139,8 +288,7 @@
 
       // Load profile and memories on mount
       useEffect(() => {
-        // Try Supabase first, fall back to localStorage
-        fetch("/api/profile")
+        authFetch("/api/profile")
           .then((r) => r.json())
           .then((data) => {
             if (data.profile) {
@@ -156,22 +304,11 @@
                 equipment: data.profile.equipment || "",
               });
               setSaved(true);
-            } else {
-              // Fallback to localStorage
-              try {
-                const s = localStorage.getItem("judy-family");
-                if (s) { setProfile(JSON.parse(s)); setSaved(true); }
-              } catch (e) {}
             }
           })
-          .catch(() => {
-            try {
-              const s = localStorage.getItem("judy-family");
-              if (s) { setProfile(JSON.parse(s)); setSaved(true); }
-            } catch (e) {}
-          });
+          .catch(() => {});
 
-        fetch("/api/memories")
+        authFetch("/api/memories")
           .then((r) => r.json())
           .then((data) => { if (data.memories) setMemories(data.memories); })
           .catch(() => {});
@@ -187,14 +324,11 @@
       }, [input]);
 
       const saveProfile = async () => {
-        // Always save to localStorage as offline fallback
-        try { localStorage.setItem("judy-family", JSON.stringify(profile)); } catch (e) {}
-        // Save to Supabase
         try {
-          await fetch("/api/profile", {
+          await authFetch("/api/profile", {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(profile),
+            body: JSON.stringify({ ...profile, name: userName }),
           });
         } catch (e) {}
         setSaved(true);
@@ -203,13 +337,13 @@
 
       const deleteMemory = async (id) => {
         try {
-          await fetch(`/api/memories/${id}`, { method: "DELETE" });
+          await authFetch(`/api/memories/${id}`, { method: "DELETE" });
           setMemories((prev) => prev.filter((m) => m.id !== id));
         } catch (e) {}
       };
 
       const refreshMemories = () => {
-        fetch("/api/memories")
+        authFetch("/api/memories")
           .then((r) => r.json())
           .then((data) => { if (data.memories) setMemories(data.memories); })
           .catch(() => {});
@@ -228,6 +362,10 @@
           r.readAsDataURL(f);
         });
         if (fileRef.current) fileRef.current.value = "";
+      };
+
+      const handleSignOut = async () => {
+        await supabaseClient.auth.signOut();
       };
 
       const send = async (override) => {
@@ -251,13 +389,13 @@
 
         try {
           const apiMsgs = updated.map((m) => ({ role: m.role, content: m.content }));
-          const res = await fetch("/api/chat", {
+          const res = await authFetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               model: "claude-sonnet-4-20250514",
               max_tokens: 1500,
-              system: SYSTEM_PROMPT(profile, memories),
+              system: SYSTEM_PROMPT(profile, memories, userName),
               messages: apiMsgs,
             }),
           });
@@ -291,29 +429,33 @@
       return (
         <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "linear-gradient(180deg,#FFF8F0 0%,#FFF 40%)", position: "relative" }}>
           {/* Header */}
-          <div style={{ padding: "12px 16px", borderBottom: "1px solid #F0E6D9", background: "linear-gradient(135deg,#FF8C42,#FF6B35)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-            <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👩‍🍳</div>
+          <div style={{ padding: "10px 16px", borderBottom: "1px solid #F0E6D9", background: "white", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#FFF3EB", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>👩‍🍳</div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: 17, color: "white" }}>Ask Judy</div>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,.85)" }}>Your meal planning bestie 🍳</div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: "#2D2D2D" }}>Ask Judy</div>
             </div>
             <button onClick={() => setPanel(panel === "family" ? null : "family")}
-              style={{ padding: "7px 12px", borderRadius: 18, background: panel === "family" ? "white" : "rgba(255,255,255,.2)", color: panel === "family" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              🏠 My Family
+              style={{ padding: "6px 10px", borderRadius: 16, background: panel === "family" ? "#FFF3EB" : "transparent", color: panel === "family" ? "#E8652A" : "#8B7B6B", border: panel === "family" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
+              🏠 Family
             </button>
             <button onClick={() => { setPanel(panel === "memory" ? null : "memory"); if (panel !== "memory") refreshMemories(); }}
-              style={{ padding: "7px 12px", borderRadius: 18, background: panel === "memory" ? "white" : "rgba(255,255,255,.2)", color: panel === "memory" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer", position: "relative" }}>
-              🧠 Memory{memories.length > 0 && <span style={{ marginLeft: 4, background: "rgba(255,255,255,.3)", borderRadius: 8, padding: "1px 6px", fontSize: 10 }}>{memories.length}</span>}
+              style={{ padding: "6px 10px", borderRadius: 16, background: panel === "memory" ? "#FFF3EB" : "transparent", color: panel === "memory" ? "#E8652A" : "#8B7B6B", border: panel === "memory" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer", position: "relative" }}>
+              🧠{memories.length > 0 && <span style={{ marginLeft: 2, fontSize: 10 }}>{memories.length}</span>}
             </button>
             <button onClick={() => setPanel(panel === "skills" ? null : "skills")}
-              style={{ padding: "7px 12px", borderRadius: 18, background: panel === "skills" ? "white" : "rgba(255,255,255,.2)", color: panel === "skills" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              📚 Teach Me
+              style={{ padding: "6px 10px", borderRadius: 16, background: panel === "skills" ? "#FFF3EB" : "transparent", color: panel === "skills" ? "#E8652A" : "#8B7B6B", border: panel === "skills" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
+              📚 Learn
+            </button>
+            <button onClick={handleSignOut}
+              style={{ width: 32, height: 32, borderRadius: "50%", background: "transparent", color: "#B8A894", border: "1.5px solid #E8DDD0", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+              title="Sign out">
+              ↪
             </button>
           </div>
 
           {/* Family Panel */}
           {panel === "family" && (
-            <div style={{ position: "absolute", top: 66, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
+            <div style={{ position: "absolute", top: 57, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
               <div style={{ maxWidth: 500, margin: "0 auto" }}>
                 <div style={{ textAlign: "center", marginBottom: 20 }}>
                   <div style={{ fontSize: 36, marginBottom: 8 }}>🏠</div>
@@ -345,7 +487,7 @@
 
           {/* Memory Panel */}
           {panel === "memory" && (
-            <div style={{ position: "absolute", top: 66, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
+            <div style={{ position: "absolute", top: 57, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
               <div style={{ maxWidth: 500, margin: "0 auto" }}>
                 <div style={{ textAlign: "center", marginBottom: 20 }}>
                   <div style={{ fontSize: 36, marginBottom: 8 }}>🧠</div>
@@ -386,7 +528,7 @@
 
           {/* Skills Panel */}
           {panel === "skills" && (
-            <div style={{ position: "absolute", top: 66, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
+            <div style={{ position: "absolute", top: 57, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
               <div style={{ maxWidth: 500, margin: "0 auto" }}>
                 <div style={{ textAlign: "center", marginBottom: 20 }}>
                   <div style={{ fontSize: 36, marginBottom: 8 }}>📚</div>
@@ -416,7 +558,7 @@
             {welcome && msgs.length === 0 && (
               <div style={{ textAlign: "center", padding: "30px 20px" }}>
                 <div style={{ fontSize: 48, marginBottom: 10 }}>👩‍🍳</div>
-                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Hey Leslie! 👋</h2>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Hey {userName}! 👋</h2>
                 <p style={{ color: "#6B6B6B", fontSize: 14, marginBottom: 8, lineHeight: 1.5 }}>
                   I'm Judy, your meal planning partner. I'm here to make feeding your family feel less like a chore and more like you've totally got this.
                 </p>
@@ -504,7 +646,82 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<AskJudy />);
+    // ─── App (top-level auth wrapper) ────────────────────────────────
+
+    function App() {
+      const [authState, setAuthState] = useState("loading"); // loading | login | onboarding | ready
+      const [session, setSession] = useState(null);
+      const [userName, setUserName] = useState("");
+      const [supabaseClient, setSupabaseClient] = useState(null);
+
+      useEffect(() => {
+        // Init Supabase client from server config
+        fetch("/api/auth/config")
+          .then((r) => r.json())
+          .then(({ supabaseUrl, supabaseAnonKey }) => {
+            const client = window.supabase.createClient(supabaseUrl, supabaseAnonKey);
+            _supabaseClient = client;
+            setSupabaseClient(client);
+
+            // Check current session
+            client.auth.getSession().then(({ data: { session: s } }) => {
+              if (s) {
+                setSession(s);
+                checkProfile(s, client);
+              } else {
+                setAuthState("login");
+              }
+            });
+
+            // Listen for auth changes (magic link redirect, sign out, etc.)
+            const { data: { subscription } } = client.auth.onAuthStateChange((event, s) => {
+              setSession(s);
+              if (event === "SIGNED_IN" && s) {
+                checkProfile(s, client);
+              } else if (event === "SIGNED_OUT") {
+                setSession(null);
+                setUserName("");
+                setAuthState("login");
+              }
+            });
+
+            return () => subscription.unsubscribe();
+          })
+          .catch((err) => {
+            console.error("Failed to init auth:", err);
+            setAuthState("login");
+          });
+      }, []);
+
+      const checkProfile = async (s, client) => {
+        try {
+          const res = await fetch("/api/profile", {
+            headers: { "Authorization": `Bearer ${s.access_token}` },
+          });
+          const data = await res.json();
+          if (data.profile && data.profile.name) {
+            setUserName(data.profile.name);
+            setAuthState("ready");
+          } else {
+            setAuthState("onboarding");
+          }
+        } catch {
+          setAuthState("onboarding");
+        }
+      };
+
+      const handleOnboardingComplete = (name) => {
+        setUserName(name);
+        setAuthState("ready");
+      };
+
+      if (authState === "loading" || !supabaseClient) return <LoadingScreen />;
+      if (authState === "login") return <LoginScreen supabaseClient={supabaseClient} />;
+      if (authState === "onboarding") return <OnboardingScreen onComplete={handleOnboardingComplete} />;
+      return <AskJudy session={session} userName={userName} supabaseClient={supabaseClient} />;
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html>
