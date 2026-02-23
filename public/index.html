@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Ask Judy — Your Meal Planning Bestie</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👩‍🍳</text></svg>" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #FFF8F0; overflow: hidden; height: 100dvh; }
+    #root { height: 100dvh; }
+    @keyframes jbounce { 0%,60%,100%{transform:translateY(0)} 30%{transform:translateY(-6px)} }
+    textarea::placeholder { color: #B8A894; }
+    input::placeholder { color: #C4B8A8; }
+    textarea:focus, input:focus { outline: none; border-color: #FF8C42 !important; }
+    button:active { opacity: 0.85; }
+    .skill-btn:hover { background: #FFF3EB !important; border-color: #FFB88C !important; }
+    .qp-btn:hover { background: #FFF3EB !important; border-color: #FF8C42 !important; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    const SYSTEM_PROMPT = (profile) => {
+      let pInfo = "";
+      if (profile && Object.values(profile).some((v) => v)) {
+        pInfo = "\n\nHere is what you know about Leslie's family:";
+        if (profile.familySize) pInfo += "\n- Family size: " + profile.familySize;
+        if (profile.kidsAges) pInfo += "\n- Kids/ages: " + profile.kidsAges;
+        if (profile.dietaryNeeds) pInfo += "\n- Dietary needs: " + profile.dietaryNeeds;
+        if (profile.dislikes) pInfo += "\n- Dislikes: " + profile.dislikes;
+        if (profile.budget) pInfo += "\n- Budget: " + profile.budget;
+        if (profile.cookingLevel) pInfo += "\n- Cooking level: " + profile.cookingLevel;
+        if (profile.busyNights) pInfo += "\n- Busy nights: " + profile.busyNights;
+        if (profile.favorites) pInfo += "\n- Favorites: " + profile.favorites;
+        if (profile.equipment) pInfo += "\n- Equipment: " + profile.equipment;
+        pInfo += "\nUse this info to personalize suggestions naturally.";
+      } else {
+        pInfo = "\n\nYou don't know much about Leslie's family yet. Gently ask questions to learn more.";
+      }
+
+      return (
+        "You are Judy, a warm, fun, and encouraging meal planning assistant. You are like a best friend in the kitchen.\n\n" +
+        "Personality: Warm, upbeat, supportive. You understand the struggles of a mom keeping everything together. " +
+        "Never judge. Casual friendly language. Celebrate small wins. Practical not aspirational. Light humor. Use emojis naturally but not excessively.\n\n" +
+        "Skills:\n" +
+        "- Meal Planning: Weekly plans tailored to family size, ages, picky eaters, schedule\n" +
+        "- Grocery Lists: Organized by store section. Efficient, no random one-off ingredients\n" +
+        "- Recipes: Easy family-friendly. Weeknight 30 min or less. Weekend fun meals too\n" +
+        "- Budget-conscious: Smart swaps, batch cooking\n" +
+        "- Leftovers strategy: Meals that build on each other\n" +
+        "- Image support: Help with photos of fridge, pantry, recipes\n" +
+        "- Teaching: Break things down simply, no chef jargon, encouraging baby steps\n" +
+        "- School Lunches: Leslie has Kendall (13, 7th grade) and Jake (10, 5th grade). " +
+        "School lunches are a big pain point. Packable, stays fresh, not boring. " +
+        "Kendall cares what her lunch looks like. Jake wants it to taste good. " +
+        "Suggest batch-prep Sunday systems and mix-and-match lunchbox strategies.\n" +
+        pInfo +
+        "\n\nRemember: Help Leslie feel like she has got this. Every interaction should leave her more confident."
+      );
+    };
+
+    const QUICK_PROMPTS = [
+      { label: "📅 Plan my week", text: "Help me plan meals for this week!" },
+      { label: "🛒 Grocery list", text: "I need a grocery list for the week" },
+      { label: "⏱️ Quick dinner", text: "I need a quick dinner idea for tonight, 30 minutes or less!" },
+      { label: "🍱 School lunches", text: "I need school lunch ideas for the week! Kendall is 13 in 7th grade and Jake is 10 in 5th grade. They need lunches that are easy to pack, stay fresh, and they will actually eat." },
+      { label: "📸 What's in my fridge", text: "Let me show you what I have in my fridge, tell me what I can make!" },
+    ];
+
+    const SKILL_TOPICS = [
+      { emoji: "🍱", label: "School lunch ideas that aren't boring", text: "Teach me how to pack school lunches that Kendall (13, 7th grade) and Jake (10, 5th grade) will actually eat. I am tired of the same sandwich every day" },
+      { emoji: "🧊", label: "Lunchbox prep and what stays fresh", text: "Teach me what foods pack well for school lunches and stay good until lunchtime. What needs ice packs? What gets soggy? How do I prep the night before?" },
+      { emoji: "🔪", label: "Knife skills basics", text: "Teach me basic knife skills, how to chop, dice, and mince like I actually know what I am doing" },
+      { emoji: "🧂", label: "How to season food", text: "Teach me how to season food properly. I never know how much salt or spice to use" },
+      { emoji: "🥩", label: "How to tell when meat is done", text: "Teach me how to tell when meat is done cooking. I am always paranoid about undercooking" },
+      { emoji: "📦", label: "Meal prep 101", text: "Teach me how to meal prep. I want to start but I do not know where to begin" },
+      { emoji: "🍳", label: "Cooking methods explained", text: "Teach me the difference between sauteing, braising, roasting, etc. in simple terms" },
+      { emoji: "❄️", label: "What can I freeze?", text: "Teach me what foods I can freeze and how to do it right so nothing goes to waste" },
+      { emoji: "💰", label: "Budget meal tricks", text: "Teach me how to eat well on a tight budget. What are the best bang-for-your-buck ingredients?" },
+      { emoji: "🥗", label: "Making veggies kids like", text: "Teach me tricks for getting kids to actually eat vegetables without a fight" },
+    ];
+
+    const PROFILE_FIELDS = [
+      { key: "familySize", label: "How many people are you feeding?", icon: "👨‍👩‍👧‍👦", hint: "e.g. 4 — me, husband, and 2 kids" },
+      { key: "kidsAges", label: "Kids' ages?", icon: "👶", hint: "e.g. 5 and 8 or toddler and teenager" },
+      { key: "dietaryNeeds", label: "Any allergies or dietary needs?", icon: "⚠️", hint: "e.g. daughter is lactose intolerant" },
+      { key: "dislikes", label: "Foods your family hates?", icon: "🚫", hint: "e.g. kids won't touch mushrooms", multi: true },
+      { key: "budget", label: "Grocery budget vibe?", icon: "💰", hint: "e.g. trying to keep it under $150/week" },
+      { key: "cookingLevel", label: "How comfortable in the kitchen?", icon: "👩‍🍳", hint: "e.g. total beginner, can follow a recipe" },
+      { key: "busyNights", label: "Which nights are craziest?", icon: "📅", hint: "e.g. Tuesdays and Thursdays — soccer" },
+      { key: "favorites", label: "Family favorite meals?", icon: "⭐", hint: "e.g. tacos, mac and cheese, stir fry", multi: true },
+      { key: "equipment", label: "Kitchen equipment?", icon: "🍳", hint: "e.g. Instant Pot, air fryer, basic stuff" },
+    ];
+
+    function AskJudy() {
+      const [msgs, setMsgs] = useState([]);
+      const [input, setInput] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [images, setImages] = useState([]);
+      const [welcome, setWelcome] = useState(true);
+      const [profile, setProfile] = useState({
+        familySize: "", kidsAges: "", dietaryNeeds: "", dislikes: "",
+        budget: "", cookingLevel: "", busyNights: "", favorites: "", equipment: "",
+      });
+      const [panel, setPanel] = useState(null);
+      const [saved, setSaved] = useState(false);
+      const endRef = useRef(null);
+      const fileRef = useRef(null);
+      const taRef = useRef(null);
+
+      // Load saved profile from localStorage
+      useEffect(() => {
+        try {
+          const s = localStorage.getItem("judy-family");
+          if (s) { setProfile(JSON.parse(s)); setSaved(true); }
+        } catch (e) {}
+      }, []);
+
+      useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
+
+      useEffect(() => {
+        if (taRef.current) {
+          taRef.current.style.height = "auto";
+          taRef.current.style.height = Math.min(taRef.current.scrollHeight, 120) + "px";
+        }
+      }, [input]);
+
+      const saveProfile = () => {
+        try {
+          localStorage.setItem("judy-family", JSON.stringify(profile));
+          setSaved(true);
+          setPanel(null);
+        } catch (e) {}
+      };
+
+      const onFiles = (e) => {
+        Array.from(e.target.files).forEach((f) => {
+          if (!f.type.startsWith("image/")) return;
+          const r = new FileReader();
+          r.onload = (ev) => {
+            setImages((p) => [...p, {
+              base64: ev.target.result.split(",")[1],
+              type: f.type, preview: ev.target.result,
+            }]);
+          };
+          r.readAsDataURL(f);
+        });
+        if (fileRef.current) fileRef.current.value = "";
+      };
+
+      const send = async (override) => {
+        const text = override || input.trim();
+        if (!text && images.length === 0) return;
+        setWelcome(false);
+        setPanel(null);
+
+        const content = [];
+        images.forEach((img) => {
+          content.push({ type: "image", source: { type: "base64", media_type: img.type, data: img.base64 } });
+        });
+        if (text) content.push({ type: "text", text });
+
+        const userMsg = { role: "user", content, _text: text, _imgs: images.map((i) => i.preview) };
+        const updated = [...msgs, userMsg];
+        setMsgs(updated);
+        setInput("");
+        setImages([]);
+        setLoading(true);
+
+        try {
+          const apiMsgs = updated.map((m) => ({ role: m.role, content: m.content }));
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 1500,
+              system: SYSTEM_PROMPT(profile),
+              messages: apiMsgs,
+            }),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error.message || "API error");
+          const txt = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
+          setMsgs((p) => [...p, { role: "assistant", content: txt || "Hmm, hit a snag. Try again!", _text: txt }]);
+        } catch (e) {
+          setMsgs((p) => [...p, { role: "assistant", content: "Oops! Something went wrong. Try again? 💛", _text: "Oops! Something went wrong. Try again? 💛" }]);
+        } finally {
+          setLoading(false);
+        }
+      };
+
+      const fmt = (text) => {
+        if (!text) return null;
+        return text.split("\n").map((line, i) => {
+          let h = line.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>");
+          if (line.startsWith("### ")) return <h4 key={i} style={{ margin: "8px 0 4px", fontSize: 15, fontWeight: 700 }}>{line.slice(4)}</h4>;
+          if (line.startsWith("## ")) return <h3 key={i} style={{ margin: "10px 0 4px", fontSize: 16, fontWeight: 700 }}>{line.slice(3)}</h3>;
+          if (line.startsWith("# ")) return <h2 key={i} style={{ margin: "12px 0 6px", fontSize: 18, fontWeight: 700 }}>{line.slice(2)}</h2>;
+          if (/^[-•]\s/.test(line)) return <div key={i} style={{ paddingLeft: 12, marginBottom: 2 }} dangerouslySetInnerHTML={{ __html: "• " + h.slice(2) }} />;
+          if (/^\d+\.\s/.test(line)) return <div key={i} style={{ paddingLeft: 12, marginBottom: 2 }} dangerouslySetInnerHTML={{ __html: h }} />;
+          if (!line.trim()) return <br key={i} />;
+          return <p key={i} style={{ margin: "2px 0" }} dangerouslySetInnerHTML={{ __html: h }} />;
+        });
+      };
+
+      return (
+        <div style={{ display: "flex", flexDirection: "column", height: "100dvh", background: "linear-gradient(180deg,#FFF8F0 0%,#FFF 40%)", position: "relative" }}>
+          {/* Header */}
+          <div style={{ padding: "12px 16px", borderBottom: "1px solid #F0E6D9", background: "linear-gradient(135deg,#FF8C42,#FF6B35)", display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <div style={{ width: 40, height: 40, borderRadius: "50%", background: "rgba(255,255,255,.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>👩‍🍳</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 17, color: "white" }}>Ask Judy</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,.85)" }}>Your meal planning bestie 🍳</div>
+            </div>
+            <button onClick={() => setPanel(panel === "family" ? null : "family")}
+              style={{ padding: "7px 12px", borderRadius: 18, background: panel === "family" ? "white" : "rgba(255,255,255,.2)", color: panel === "family" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              🏠 My Family
+            </button>
+            <button onClick={() => setPanel(panel === "skills" ? null : "skills")}
+              style={{ padding: "7px 12px", borderRadius: 18, background: panel === "skills" ? "white" : "rgba(255,255,255,.2)", color: panel === "skills" ? "#FF6B35" : "white", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              📚 Teach Me
+            </button>
+          </div>
+
+          {/* Family Panel */}
+          {panel === "family" && (
+            <div style={{ position: "absolute", top: 66, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
+              <div style={{ maxWidth: 500, margin: "0 auto" }}>
+                <div style={{ textAlign: "center", marginBottom: 20 }}>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>🏠</div>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Tell Judy About Your Family</h2>
+                  <p style={{ color: "#8B7B6B", fontSize: 13, lineHeight: 1.5 }}>The more Judy knows, the better she can help!</p>
+                </div>
+                {PROFILE_FIELDS.map((f) => (
+                  <div key={f.key} style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 13, fontWeight: 600, color: "#5A4A3A", display: "block", marginBottom: 4 }}>{f.icon} {f.label}</label>
+                    <div style={{ fontSize: 11, color: "#9B8A7A", marginBottom: 4 }}>{f.hint}</div>
+                    {f.multi ? (
+                      <textarea value={profile[f.key]} onChange={(e) => setProfile((p) => ({ ...p, [f.key]: e.target.value }))} rows={2}
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #E8DDD0", fontSize: 14, fontFamily: "inherit", background: "#FFFCF8", resize: "none", outline: "none" }} />
+                    ) : (
+                      <input value={profile[f.key]} onChange={(e) => setProfile((p) => ({ ...p, [f.key]: e.target.value }))}
+                        style={{ width: "100%", padding: "10px 12px", borderRadius: 10, border: "1.5px solid #E8DDD0", fontSize: 14, fontFamily: "inherit", background: "#FFFCF8", outline: "none" }} />
+                    )}
+                  </div>
+                ))}
+                <div style={{ display: "flex", gap: 10, marginTop: 8, marginBottom: 40 }}>
+                  <button onClick={saveProfile} style={{ flex: 1, padding: 14, borderRadius: 14, border: "none", background: "linear-gradient(135deg,#FF8C42,#FF6B35)", color: "white", fontSize: 15, fontWeight: 600, cursor: "pointer" }}>
+                    {saved ? "✅ Update & Save" : "💾 Save My Info"}
+                  </button>
+                  <button onClick={() => setPanel(null)} style={{ padding: "14px 20px", borderRadius: 14, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 15, cursor: "pointer" }}>Back</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Skills Panel */}
+          {panel === "skills" && (
+            <div style={{ position: "absolute", top: 66, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
+              <div style={{ maxWidth: 500, margin: "0 auto" }}>
+                <div style={{ textAlign: "center", marginBottom: 20 }}>
+                  <div style={{ fontSize: 36, marginBottom: 8 }}>📚</div>
+                  <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Teach Me, Judy!</h2>
+                  <p style={{ color: "#8B7B6B", fontSize: 13, lineHeight: 1.5 }}>Pick a topic and Judy will break it down simply. No chef school required!</p>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+                  {SKILL_TOPICS.map((t, i) => (
+                    <button key={i} onClick={() => send(t.text)} className="skill-btn"
+                      style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 16px", borderRadius: 14, border: "1.5px solid #F0E6D9", background: "#FFFCF8", cursor: "pointer", textAlign: "left", width: "100%" }}>
+                      <span style={{ fontSize: 24, flexShrink: 0 }}>{t.emoji}</span>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: "#3D3D3D" }}>{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div style={{ padding: 16, borderRadius: 14, background: "#FFF8F0", border: "1.5px dashed #FFD4B8", marginBottom: 40 }}>
+                  <p style={{ fontSize: 13, color: "#8B6B4A", lineHeight: 1.5 }}>
+                    💡 <strong>Don't see what you need?</strong> Just type "teach me how to..." followed by anything you want to learn!
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Messages */}
+          <div style={{ flex: 1, overflowY: "auto", padding: "16px 12px" }}>
+            {welcome && msgs.length === 0 && (
+              <div style={{ textAlign: "center", padding: "30px 20px" }}>
+                <div style={{ fontSize: 48, marginBottom: 10 }}>👩‍🍳</div>
+                <h2 style={{ fontSize: 22, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Hey Leslie! 👋</h2>
+                <p style={{ color: "#6B6B6B", fontSize: 14, marginBottom: 8, lineHeight: 1.5 }}>
+                  I'm Judy, your meal planning partner. I'm here to make feeding your family feel less like a chore and more like you've totally got this.
+                </p>
+                {!saved && (
+                  <div style={{ padding: "14px 18px", borderRadius: 14, background: "#FFF3EB", border: "1.5px solid #FFD4B8", margin: "16px auto", maxWidth: 360, textAlign: "left" }}>
+                    <p style={{ fontSize: 13, color: "#8B5E3C", lineHeight: 1.5 }}>
+                      👆 <strong>First time here?</strong> Tap <strong>"My Family"</strong> up top to tell me about your crew so I can give you personalized help!
+                    </p>
+                  </div>
+                )}
+                <p style={{ color: "#9B8B7B", fontSize: 13, margin: "16px 0 20px" }}>What can I help with today?</p>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, justifyContent: "center" }}>
+                  {QUICK_PROMPTS.map((qp, i) => (
+                    <button key={i} onClick={() => { setInput(qp.text); taRef.current?.focus(); }} className="qp-btn"
+                      style={{ padding: "10px 16px", borderRadius: 20, border: "1.5px solid #FFD4B8", background: "white", color: "#D4652A", fontSize: 13, fontWeight: 500, cursor: "pointer" }}>
+                      {qp.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {msgs.map((m, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: m.role === "user" ? "flex-end" : "flex-start", marginBottom: 12 }}>
+                <div style={{
+                  maxWidth: "85%", padding: "12px 16px", borderRadius: 18, fontSize: 14, lineHeight: 1.55,
+                  background: m.role === "user" ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#F5F0EB",
+                  color: m.role === "user" ? "white" : "#2D2D2D",
+                  borderBottomRightRadius: m.role === "user" ? 4 : 18,
+                  borderBottomLeftRadius: m.role === "user" ? 18 : 4,
+                  boxShadow: "0 1px 2px rgba(0,0,0,.06)",
+                }}>
+                  {(m._imgs || []).map((src, j) => (
+                    <img key={j} src={src} alt="" style={{ maxWidth: 200, maxHeight: 200, borderRadius: 10, display: "block", marginBottom: 8 }} />
+                  ))}
+                  {m.role === "user" ? <span>{m._text}</span> : <div>{fmt(m._text)}</div>}
+                </div>
+              </div>
+            ))}
+
+            {loading && (
+              <div style={{ display: "flex", justifyContent: "flex-start", marginBottom: 12 }}>
+                <div style={{ padding: "14px 20px", borderRadius: 18, borderBottomLeftRadius: 4, background: "#F5F0EB", display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#D4A574", animation: "jbounce 1.2s ease-in-out 0s infinite" }} />
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#D4A574", animation: "jbounce 1.2s ease-in-out .15s infinite" }} />
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#D4A574", animation: "jbounce 1.2s ease-in-out .3s infinite" }} />
+                </div>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Image Previews */}
+          {images.length > 0 && (
+            <div style={{ padding: "8px 16px", display: "flex", gap: 8, flexWrap: "wrap", borderTop: "1px solid #F0E6D9", background: "#FFFBF7", flexShrink: 0 }}>
+              {images.map((img, i) => (
+                <div key={i} style={{ position: "relative" }}>
+                  <img src={img.preview} alt="" style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 10, border: "2px solid #FFD4B8" }} />
+                  <button onClick={() => setImages((p) => p.filter((_, j) => j !== i))} style={{
+                    position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%",
+                    background: "#FF6B35", color: "white", border: "none", fontSize: 12, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>×</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Input */}
+          <div style={{ padding: "10px 16px 18px", borderTop: "1px solid #F0E6D9", background: "white", flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 8, background: "#F9F5F0", borderRadius: 24, padding: "6px 6px 6px 16px", border: "1.5px solid #EDE4DA" }}>
+              <button onClick={() => fileRef.current?.click()} style={{ width: 36, height: 36, borderRadius: "50%", border: "none", background: "transparent", cursor: "pointer", fontSize: 20, display: "flex", alignItems: "center", justifyContent: "center", color: "#B8936A", flexShrink: 0 }}>📷</button>
+              <input ref={fileRef} type="file" accept="image/*" multiple onChange={onFiles} style={{ display: "none" }} />
+              <textarea ref={taRef} value={input} onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                placeholder="Ask Judy anything..." rows={1}
+                style={{ flex: 1, border: "none", background: "transparent", resize: "none", fontSize: 15, color: "#2D2D2D", outline: "none", padding: "8px 0", fontFamily: "inherit", lineHeight: 1.4, maxHeight: 120 }} />
+              <button onClick={() => send()} disabled={loading}
+                style={{ width: 36, height: 36, borderRadius: "50%", background: (input.trim() || images.length > 0) ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", border: "none", cursor: loading ? "wait" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, color: "white", flexShrink: 0 }}>
+                ↑
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<AskJudy />);
+  </script>
+</body>
+</html>
