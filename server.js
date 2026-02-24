@@ -132,6 +132,94 @@ app.delete("/api/memories/:id", requireAuth, async (req, res) => {
   }
 });
 
+// ─── Conversations endpoints ────────────────────────────────────────
+
+app.get("/api/conversations", requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("id, title, updated_at")
+      .eq("user_id", req.userId)
+      .order("updated_at", { ascending: false });
+    if (error) throw error;
+    res.json({ conversations: data || [] });
+  } catch (err) {
+    console.error("GET /api/conversations error:", err);
+    res.status(500).json({ error: "Failed to fetch conversations" });
+  }
+});
+
+app.get("/api/conversations/:id", requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("id", req.params.id)
+      .eq("user_id", req.userId)
+      .single();
+    if (error) throw error;
+    res.json({ conversation: data });
+  } catch (err) {
+    console.error("GET /api/conversations/:id error:", err);
+    res.status(500).json({ error: "Failed to fetch conversation" });
+  }
+});
+
+app.post("/api/conversations", requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("conversations")
+      .insert({
+        user_id: req.userId,
+        title: req.body.title || "New conversation",
+        messages: req.body.messages || [],
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ conversation: data });
+  } catch (err) {
+    console.error("POST /api/conversations error:", err);
+    res.status(500).json({ error: "Failed to create conversation" });
+  }
+});
+
+app.put("/api/conversations/:id", requireAuth, async (req, res) => {
+  try {
+    const update = { updated_at: new Date().toISOString() };
+    if (req.body.messages !== undefined) update.messages = req.body.messages;
+    if (req.body.title !== undefined) update.title = req.body.title;
+
+    const { data, error } = await supabase
+      .from("conversations")
+      .update(update)
+      .eq("id", req.params.id)
+      .eq("user_id", req.userId)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ conversation: data });
+  } catch (err) {
+    console.error("PUT /api/conversations error:", err);
+    res.status(500).json({ error: "Failed to update conversation" });
+  }
+});
+
+app.delete("/api/conversations/:id", requireAuth, async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from("conversations")
+      .delete()
+      .eq("id", req.params.id)
+      .eq("user_id", req.userId);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("DELETE /api/conversations error:", err);
+    res.status(500).json({ error: "Failed to delete conversation" });
+  }
+});
+
 // ─── Chat endpoint ──────────────────────────────────────────────────
 
 app.post("/api/chat", requireAuth, async (req, res) => {
