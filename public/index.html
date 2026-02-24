@@ -175,33 +175,42 @@
     function LoginScreen({ supabaseClient }) {
       const [email, setEmail] = useState("");
       const [password, setPassword] = useState("");
-      const [isSignUp, setIsSignUp] = useState(false);
+      const [mode, setMode] = useState("signin"); // signin | signup | forgot | reset_sent
       const [error, setError] = useState("");
       const [submitting, setSubmitting] = useState(false);
 
       const handleSubmit = async () => {
-        if (!email.trim() || !password) return;
+        if (!email.trim() || (!password && mode !== "forgot")) return;
         setSubmitting(true);
         setError("");
 
+        if (mode === "forgot") {
+          const { error: err } = await supabaseClient.auth.resetPasswordForEmail(email.trim(), {
+            redirectTo: window.location.origin,
+          });
+          setSubmitting(false);
+          if (err) { setError(err.message); } else { setMode("reset_sent"); }
+          return;
+        }
+
         let result;
-        if (isSignUp) {
-          result = await supabaseClient.auth.signUp({
-            email: email.trim(),
-            password,
-          });
+        if (mode === "signup") {
+          result = await supabaseClient.auth.signUp({ email: email.trim(), password });
+          // If email confirmation is still on, signUp succeeds but session is null
+          if (!result.error && !result.data.session) {
+            setSubmitting(false);
+            setError("Account created! Check your email to confirm, then sign in.");
+            setMode("signin");
+            return;
+          }
         } else {
-          result = await supabaseClient.auth.signInWithPassword({
-            email: email.trim(),
-            password,
-          });
+          result = await supabaseClient.auth.signInWithPassword({ email: email.trim(), password });
         }
 
         setSubmitting(false);
         if (result.error) {
           setError(result.error.message);
         }
-        // onAuthStateChange handles the rest on success
       };
 
       return (
@@ -210,36 +219,57 @@
           <h1 style={{ fontSize: 26, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Ask Judy</h1>
           <p style={{ color: "#8B7B6B", fontSize: 14, marginBottom: 32, textAlign: "center" }}>Your meal planning bestie</p>
 
-          <div style={{ width: "100%", maxWidth: 340 }}>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="Email"
-              style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 10 }}
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
-              placeholder="Password"
-              style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
-            />
-            {error && <p style={{ color: "#D44", fontSize: 13, marginBottom: 12 }}>{error}</p>}
-            <button
-              onClick={handleSubmit}
-              disabled={submitting || !email.trim() || !password}
-              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (email.trim() && password) ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: submitting ? "wait" : "pointer", marginBottom: 12 }}>
-              {submitting ? "Please wait..." : isSignUp ? "Create Account" : "Sign In"}
-            </button>
-            <p style={{ textAlign: "center", fontSize: 14, color: "#8B7B6B" }}>
-              {isSignUp ? "Already have an account? " : "Don't have an account? "}
-              <span onClick={() => { setIsSignUp(!isSignUp); setError(""); }} style={{ color: "#E8652A", fontWeight: 600, cursor: "pointer" }}>
-                {isSignUp ? "Sign In" : "Sign Up"}
-              </span>
-            </p>
-          </div>
+          {mode === "reset_sent" ? (
+            <div style={{ textAlign: "center", maxWidth: 340 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>📬</div>
+              <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 8 }}>Check your email!</h2>
+              <p style={{ color: "#8B7B6B", fontSize: 14, lineHeight: 1.5 }}>
+                We sent a password reset link to <strong>{email}</strong>.
+              </p>
+              <button onClick={() => setMode("signin")} style={{ marginTop: 20, padding: "10px 20px", borderRadius: 12, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 14, cursor: "pointer" }}>
+                Back to Sign In
+              </button>
+            </div>
+          ) : (
+            <div style={{ width: "100%", maxWidth: 340 }}>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Email"
+                style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 10 }}
+              />
+              {mode !== "forgot" && (
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+                  placeholder={mode === "signup" ? "Choose a password (6+ characters)" : "Password"}
+                  style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
+                />
+              )}
+              {error && <p style={{ color: "#D44", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+              <button
+                onClick={handleSubmit}
+                disabled={submitting || !email.trim() || (!password && mode !== "forgot")}
+                style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (email.trim() && (password || mode === "forgot")) ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: submitting ? "wait" : "pointer", marginBottom: 12 }}>
+                {submitting ? "Please wait..." : mode === "signup" ? "Create Account" : mode === "forgot" ? "Send Reset Link" : "Sign In"}
+              </button>
+              {mode === "signin" && (
+                <p style={{ textAlign: "center", fontSize: 13, color: "#B8A894", marginBottom: 8 }}>
+                  <span onClick={() => { setMode("forgot"); setError(""); }} style={{ cursor: "pointer", textDecoration: "underline" }}>Forgot password?</span>
+                </p>
+              )}
+              <p style={{ textAlign: "center", fontSize: 14, color: "#8B7B6B" }}>
+                {mode === "signup" ? "Already have an account? " : mode === "forgot" ? "Remember it? " : "Don't have an account? "}
+                <span onClick={() => { setMode(mode === "signup" ? "signin" : mode === "forgot" ? "signin" : "signup"); setError(""); }} style={{ color: "#E8652A", fontWeight: 600, cursor: "pointer" }}>
+                  {mode === "signup" ? "Sign In" : mode === "forgot" ? "Sign In" : "Sign Up"}
+                </span>
+              </p>
+            </div>
+          )}
+        </div>
         </div>
       );
     }
