@@ -127,6 +127,7 @@
 
     async function getAccessToken() {
       if (!_supabaseClient) return null;
+      // getSession returns cached token; refreshSession forces a fresh one if expired
       const { data } = await _supabaseClient.auth.getSession();
       return data.session?.access_token || null;
     }
@@ -134,13 +135,28 @@
     async function authFetch(url, options = {}) {
       const token = await getAccessToken();
       if (!token) throw new Error("Not authenticated");
-      return fetch(url, {
+      const res = await fetch(url, {
         ...options,
         headers: {
           ...options.headers,
           "Authorization": `Bearer ${token}`,
         },
       });
+      // If token expired, refresh and retry once
+      if (res.status === 401 && _supabaseClient) {
+        const { data } = await _supabaseClient.auth.refreshSession();
+        const newToken = data.session?.access_token;
+        if (newToken) {
+          return fetch(url, {
+            ...options,
+            headers: {
+              ...options.headers,
+              "Authorization": `Bearer ${newToken}`,
+            },
+          });
+        }
+      }
+      return res;
     }
 
     // ─── LoadingScreen ───────────────────────────────────────────────
@@ -727,12 +743,12 @@
               }
             });
 
-            // Listen for auth changes (magic link redirect, sign out, etc.)
+            // Listen for auth changes (magic link redirect, sign out, token refresh, session restore)
             const { data: { subscription } } = client.auth.onAuthStateChange((event, s) => {
               setSession(s);
-              if (event === "SIGNED_IN" && s) {
+              if ((event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") && s) {
                 checkProfile(s, client);
-              } else if (event === "SIGNED_OUT") {
+              } else if (event === "SIGNED_OUT" || (!s && event === "INITIAL_SESSION")) {
                 setSession(null);
                 setUserName("");
                 setAuthState("login");
