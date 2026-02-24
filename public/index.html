@@ -733,22 +733,22 @@
             _supabaseClient = client;
             setSupabaseClient(client);
 
-            // Check current session
-            client.auth.getSession().then(({ data: { session: s } }) => {
-              if (s) {
-                setSession(s);
-                checkProfile(s, client);
-              } else {
-                setAuthState("login");
-              }
-            });
-
-            // Listen for auth changes (magic link redirect, sign out, token refresh, session restore)
-            const { data: { subscription } } = client.auth.onAuthStateChange((event, s) => {
+            // onAuthStateChange handles everything: initial load, sign-in, sign-out, token refresh
+            const { data: { subscription } } = client.auth.onAuthStateChange(async (event, s) => {
               setSession(s);
-              if ((event === "SIGNED_IN" || event === "INITIAL_SESSION" || event === "TOKEN_REFRESHED") && s) {
-                checkProfile(s, client);
-              } else if (event === "SIGNED_OUT" || (!s && event === "INITIAL_SESSION")) {
+              if (s && (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED")) {
+                // For returning users, refresh the session to get a valid token
+                if (event === "INITIAL_SESSION") {
+                  const { data: refreshed } = await client.auth.refreshSession();
+                  if (refreshed.session) {
+                    checkProfile(refreshed.session);
+                  } else {
+                    setAuthState("login");
+                  }
+                } else {
+                  checkProfile(s);
+                }
+              } else if (event === "SIGNED_OUT" || (event === "INITIAL_SESSION" && !s)) {
                 setSession(null);
                 setUserName("");
                 setAuthState("login");
@@ -763,11 +763,9 @@
           });
       }, []);
 
-      const checkProfile = async (s, client) => {
+      const checkProfile = async (s) => {
         try {
-          const res = await fetch("/api/profile", {
-            headers: { "Authorization": `Bearer ${s.access_token}` },
-          });
+          const res = await authFetch("/api/profile");
           const data = await res.json();
           if (data.profile && data.profile.name) {
             setUserName(data.profile.name);
