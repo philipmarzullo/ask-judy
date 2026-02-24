@@ -391,8 +391,6 @@
       const [memories, setMemories] = useState([]);
       const [panel, setPanel] = useState(null);
       const [saved, setSaved] = useState(false);
-      const [convoId, setConvoId] = useState(null);
-      const [convoList, setConvoList] = useState([]);
       const endRef = useRef(null);
       const fileRef = useRef(null);
       const taRef = useRef(null);
@@ -424,94 +422,7 @@
           .then((data) => { if (data.memories) setMemories(data.memories); })
           .catch(() => {});
 
-        // Load conversation list and restore the most recent one
-        loadConversations(true);
       }, []);
-
-      const loadConversations = async (restoreLast) => {
-        try {
-          const r = await authFetch("/api/conversations");
-          const data = await r.json();
-          const list = data.conversations || [];
-          setConvoList(list);
-          if (restoreLast && list.length > 0) {
-            // Load the most recent conversation's messages
-            const latest = list[0];
-            setConvoId(latest.id);
-            // Fetch full conversation to get messages
-            const r2 = await authFetch(`/api/conversations/${latest.id}`);
-            const d2 = await r2.json();
-            if (d2.conversation && d2.conversation.messages && d2.conversation.messages.length > 0) {
-              setMsgs(d2.conversation.messages);
-              setWelcome(false);
-            }
-          }
-        } catch (e) {}
-      };
-
-      const saveConversation = async (updatedMsgs, isNew) => {
-        // Strip base64 image data before saving (too large for DB)
-        const saveMsgs = updatedMsgs.map((m) => {
-          if (m._imgs || (Array.isArray(m.content) && m.content.some((c) => c.type === "image"))) {
-            return { role: m.role, content: m._text || m.content, _text: m._text };
-          }
-          return { role: m.role, content: m.content, _text: m._text };
-        });
-
-        // Generate title from first user message
-        const firstUserText = updatedMsgs.find((m) => m.role === "user")?._text || "New conversation";
-        const title = firstUserText.slice(0, 60) + (firstUserText.length > 60 ? "..." : "");
-
-        try {
-          if (convoId && !isNew) {
-            await authFetch(`/api/conversations/${convoId}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ messages: saveMsgs, title }),
-            });
-          } else {
-            const r = await authFetch("/api/conversations", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ messages: saveMsgs, title }),
-            });
-            const data = await r.json();
-            if (data.conversation) setConvoId(data.conversation.id);
-          }
-          // Refresh the list
-          const r = await authFetch("/api/conversations");
-          const data = await r.json();
-          setConvoList(data.conversations || []);
-        } catch (e) {}
-      };
-
-      const startNewConvo = () => {
-        setConvoId(null);
-        setMsgs([]);
-        setWelcome(true);
-        setPanel(null);
-      };
-
-      const loadConvo = async (id) => {
-        try {
-          const r = await authFetch(`/api/conversations/${id}`);
-          const data = await r.json();
-          if (data.conversation) {
-            setConvoId(data.conversation.id);
-            setMsgs(data.conversation.messages || []);
-            setWelcome(false);
-            setPanel(null);
-          }
-        } catch (e) {}
-      };
-
-      const deleteConvo = async (id) => {
-        try {
-          await authFetch(`/api/conversations/${id}`, { method: "DELETE" });
-          setConvoList((prev) => prev.filter((c) => c.id !== id));
-          if (convoId === id) startNewConvo();
-        } catch (e) {}
-      };
 
       useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, loading]);
 
@@ -601,11 +512,7 @@
           const data = await res.json();
           if (data.error) throw new Error(data.error.message || "API error");
           const txt = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-          const assistantMsg = { role: "assistant", content: txt || "Hmm, hit a snag. Try again!", _text: txt };
-          const finalMsgs = [...updated, assistantMsg];
-          setMsgs(finalMsgs);
-          // Save conversation to DB
-          saveConversation(finalMsgs, !convoId);
+          setMsgs((p) => [...p, { role: "assistant", content: txt || "Hmm, hit a snag. Try again!", _text: txt }]);
           // Refresh memories after a short delay (gives extraction time to complete)
           setTimeout(refreshMemories, 3000);
         } catch (e) {
@@ -637,25 +544,17 @@
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 16, color: "#2D2D2D" }}>Ask Judy</div>
             </div>
-            <button onClick={startNewConvo}
-              style={{ padding: "6px 10px", borderRadius: 16, background: "transparent", color: "#8B7B6B", border: "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
-              + New
-            </button>
-            <button onClick={() => { setPanel(panel === "chats" ? null : "chats"); if (panel !== "chats") loadConversations(false); }}
-              style={{ padding: "6px 10px", borderRadius: 16, background: panel === "chats" ? "#FFF3EB" : "transparent", color: panel === "chats" ? "#E8652A" : "#8B7B6B", border: panel === "chats" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
-              💬{convoList.length > 0 && <span style={{ marginLeft: 2, fontSize: 10 }}>{convoList.length}</span>}
-            </button>
             <button onClick={() => setPanel(panel === "family" ? null : "family")}
               style={{ padding: "6px 10px", borderRadius: 16, background: panel === "family" ? "#FFF3EB" : "transparent", color: panel === "family" ? "#E8652A" : "#8B7B6B", border: panel === "family" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
-              🏠
+              🏠 Family
             </button>
             <button onClick={() => { setPanel(panel === "memory" ? null : "memory"); if (panel !== "memory") refreshMemories(); }}
               style={{ padding: "6px 10px", borderRadius: 16, background: panel === "memory" ? "#FFF3EB" : "transparent", color: panel === "memory" ? "#E8652A" : "#8B7B6B", border: panel === "memory" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer", position: "relative" }}>
-              🧠{memories.length > 0 && <span style={{ marginLeft: 2, fontSize: 10 }}>{memories.length}</span>}
+              🧠 Memory{memories.length > 0 && <span style={{ marginLeft: 4, background: "#FFE8D6", borderRadius: 8, padding: "1px 6px", fontSize: 10 }}>{memories.length}</span>}
             </button>
             <button onClick={() => setPanel(panel === "skills" ? null : "skills")}
               style={{ padding: "6px 10px", borderRadius: 16, background: panel === "skills" ? "#FFF3EB" : "transparent", color: panel === "skills" ? "#E8652A" : "#8B7B6B", border: panel === "skills" ? "1.5px solid #FFD4B8" : "1.5px solid #E8DDD0", fontSize: 12, fontWeight: 500, cursor: "pointer" }}>
-              📚
+              📚 Learn
             </button>
             <button onClick={handleSignOut}
               style={{ width: 32, height: 32, borderRadius: "50%", background: "transparent", color: "#B8A894", border: "1.5px solid #E8DDD0", fontSize: 14, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
@@ -663,50 +562,6 @@
               ↪
             </button>
           </div>
-
-          {/* Chats Panel */}
-          {panel === "chats" && (
-            <div style={{ position: "absolute", top: 57, left: 0, right: 0, bottom: 0, background: "white", zIndex: 10, overflowY: "auto", padding: "20px 16px" }}>
-              <div style={{ maxWidth: 500, margin: "0 auto" }}>
-                <div style={{ textAlign: "center", marginBottom: 20 }}>
-                  <div style={{ fontSize: 36, marginBottom: 8 }}>💬</div>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Your Conversations</h2>
-                  <p style={{ color: "#8B7B6B", fontSize: 13, lineHeight: 1.5 }}>Pick up where you left off or start fresh.</p>
-                </div>
-                <button onClick={() => { startNewConvo(); setPanel(null); }}
-                  style={{ width: "100%", padding: 14, borderRadius: 14, border: "1.5px dashed #FFD4B8", background: "#FFF8F0", color: "#E8652A", fontSize: 15, fontWeight: 600, cursor: "pointer", marginBottom: 16 }}>
-                  + Start New Conversation
-                </button>
-                {convoList.length === 0 ? (
-                  <div style={{ textAlign: "center", padding: "40px 20px" }}>
-                    <div style={{ fontSize: 40, marginBottom: 12 }}>💭</div>
-                    <p style={{ color: "#8B7B6B", fontSize: 14, lineHeight: 1.5 }}>
-                      No conversations yet! Start chatting with Judy.
-                    </p>
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 40 }}>
-                    {convoList.map((c) => (
-                      <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 12, border: convoId === c.id ? "1.5px solid #FFD4B8" : "1.5px solid #F0E6D9", background: convoId === c.id ? "#FFF8F0" : "#FFFCF8", cursor: "pointer" }}
-                        onClick={() => loadConvo(c.id)}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 14, fontWeight: 500, color: "#3D3D3D", lineHeight: 1.4 }}>{c.title || "Untitled"}</div>
-                          <div style={{ fontSize: 11, color: "#B8A894", marginTop: 2 }}>{new Date(c.updated_at).toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>
-                        </div>
-                        <button onClick={(e) => { e.stopPropagation(); deleteConvo(c.id); }} className="mem-del"
-                          style={{ padding: "4px 8px", borderRadius: 8, border: "1px solid #E8DDD0", background: "#FFF", color: "#B8936A", fontSize: 12, cursor: "pointer", flexShrink: 0 }}>
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ marginBottom: 40 }}>
-                  <button onClick={() => setPanel(null)} style={{ width: "100%", padding: 14, borderRadius: 14, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 15, cursor: "pointer" }}>Back</button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Family Panel */}
           {panel === "family" && (
