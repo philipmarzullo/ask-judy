@@ -174,24 +174,34 @@
 
     function LoginScreen({ supabaseClient }) {
       const [email, setEmail] = useState("");
-      const [sent, setSent] = useState(false);
+      const [password, setPassword] = useState("");
+      const [isSignUp, setIsSignUp] = useState(false);
       const [error, setError] = useState("");
-      const [sending, setSending] = useState(false);
+      const [submitting, setSubmitting] = useState(false);
 
-      const handleSend = async () => {
-        if (!email.trim()) return;
-        setSending(true);
+      const handleSubmit = async () => {
+        if (!email.trim() || !password) return;
+        setSubmitting(true);
         setError("");
-        const { error: err } = await supabaseClient.auth.signInWithOtp({
-          email: email.trim(),
-          options: { emailRedirectTo: window.location.origin },
-        });
-        setSending(false);
-        if (err) {
-          setError(err.message);
+
+        let result;
+        if (isSignUp) {
+          result = await supabaseClient.auth.signUp({
+            email: email.trim(),
+            password,
+          });
         } else {
-          setSent(true);
+          result = await supabaseClient.auth.signInWithPassword({
+            email: email.trim(),
+            password,
+          });
         }
+
+        setSubmitting(false);
+        if (result.error) {
+          setError(result.error.message);
+        }
+        // onAuthStateChange handles the rest on success
       };
 
       return (
@@ -200,36 +210,36 @@
           <h1 style={{ fontSize: 26, fontWeight: 700, color: "#2D2D2D", marginBottom: 6 }}>Ask Judy</h1>
           <p style={{ color: "#8B7B6B", fontSize: 14, marginBottom: 32, textAlign: "center" }}>Your meal planning bestie</p>
 
-          {sent ? (
-            <div style={{ textAlign: "center", maxWidth: 340 }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>📬</div>
-              <h2 style={{ fontSize: 20, fontWeight: 700, color: "#2D2D2D", marginBottom: 8 }}>Check your email!</h2>
-              <p style={{ color: "#8B7B6B", fontSize: 14, lineHeight: 1.5 }}>
-                We sent a magic link to <strong>{email}</strong>. Click it to sign in.
-              </p>
-              <button onClick={() => setSent(false)} style={{ marginTop: 20, padding: "10px 20px", borderRadius: 12, border: "1.5px solid #E8DDD0", background: "white", color: "#8B7B6B", fontSize: 14, cursor: "pointer" }}>
-                Use a different email
-              </button>
-            </div>
-          ) : (
-            <div style={{ width: "100%", maxWidth: 340 }}>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-                placeholder="Enter your email"
-                style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
-              />
-              {error && <p style={{ color: "#D44", fontSize: 13, marginBottom: 12 }}>{error}</p>}
-              <button
-                onClick={handleSend}
-                disabled={sending || !email.trim()}
-                style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: email.trim() ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: sending ? "wait" : "pointer" }}>
-                {sending ? "Sending..." : "Send Magic Link"}
-              </button>
-            </div>
-          )}
+          <div style={{ width: "100%", maxWidth: 340 }}>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Email"
+              style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 10 }}
+            />
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+              placeholder="Password"
+              style={{ width: "100%", padding: "14px 16px", borderRadius: 14, border: "1.5px solid #E8DDD0", fontSize: 16, fontFamily: "inherit", background: "#FFFCF8", outline: "none", marginBottom: 12 }}
+            />
+            {error && <p style={{ color: "#D44", fontSize: 13, marginBottom: 12 }}>{error}</p>}
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || !email.trim() || !password}
+              style={{ width: "100%", padding: 14, borderRadius: 14, border: "none", background: (email.trim() && password) ? "linear-gradient(135deg,#FF8C42,#FF6B35)" : "#DDD", color: "white", fontSize: 16, fontWeight: 600, cursor: submitting ? "wait" : "pointer", marginBottom: 12 }}>
+              {submitting ? "Please wait..." : isSignUp ? "Create Account" : "Sign In"}
+            </button>
+            <p style={{ textAlign: "center", fontSize: 14, color: "#8B7B6B" }}>
+              {isSignUp ? "Already have an account? " : "Don't have an account? "}
+              <span onClick={() => { setIsSignUp(!isSignUp); setError(""); }} style={{ color: "#E8652A", fontWeight: 600, cursor: "pointer" }}>
+                {isSignUp ? "Sign In" : "Sign Up"}
+              </span>
+            </p>
+          </div>
         </div>
       );
     }
